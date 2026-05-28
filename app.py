@@ -44,7 +44,11 @@ st.sidebar.caption("Cast a wide net across public + scraped sources.")
 
 with st.sidebar:
     st.header("Search")
-    keyword = st.text_input("Keyword (company / project / address)", "")
+    keyword = st.text_input(
+        "Search query (company/project/address/trade)",
+        "",
+        help="This text is used directly in the scraper search queries for DuckDuckGo and directory lookups.",
+    )
 
     st.header("Trades")
     selected_trades = st.multiselect(
