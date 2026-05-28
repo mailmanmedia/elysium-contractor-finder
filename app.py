@@ -15,13 +15,17 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from sources import (
+    angi,
     bbb,
     chicago_contracts,
     chicago_permits,
     enrichment,
+    homeadvisor,
     idfpr_licenses,
+    linkedin,
     search_engines,
     yellow_pages,
+    yelp,
 )
 from sources.merge import merge_sources
 from sources.trades import all_trade_labels
@@ -74,6 +78,10 @@ with st.sidebar:
     use_yp = st.checkbox("Yellow Pages (scrape — opt-in)", value=False)
     use_bbb = st.checkbox("BBB (scrape — opt-in)", value=False)
     use_search = st.checkbox("DuckDuckGo search results (scrape — opt-in)", value=False)
+    use_yelp = st.checkbox("Yelp search (site search via DuckDuckGo)", value=False)
+    use_angi = st.checkbox("Angi search (site search via DuckDuckGo)", value=False)
+    use_homeadvisor = st.checkbox("HomeAdvisor search (site search via DuckDuckGo)", value=False)
+    use_linkedin = st.checkbox("LinkedIn company pages (site search via DuckDuckGo)", value=False)
     follow_search_links = st.checkbox(
         "Follow search result pages for phone/email extraction",
         value=False,
@@ -102,10 +110,10 @@ with st.sidebar:
         value=True,
         help="Place contractors with phone/email at the top.",
     )
-    if require_contact and not (use_yp or use_bbb or use_google or use_hunter or use_apollo):
+    if require_contact and not (use_yp or use_bbb or use_search or use_yelp or use_angi or use_homeadvisor or use_linkedin or use_google or use_hunter or use_apollo):
         st.warning(
             "Contact details are likely unavailable unless scraping or enrichment is enabled. "
-            "Turn on Yellow Pages, BBB, or paid APIs for better coverage."
+            "Turn on Yellow Pages, BBB, Yelp, Angi, HomeAdvisor, LinkedIn, or paid APIs for better coverage."
         )
 
     st.header("Contact-first sourcing")
@@ -115,9 +123,14 @@ with st.sidebar:
         help="If selected, the search will prioritize reachability by running scrapers and enrichment sources for phone/email details.",
     )
     if contact_first_mode:
+        use_yp = True
+        use_bbb = True
+        use_search = True
+        use_yelp = True
+        use_angi = True
         follow_search_links = True
         st.info(
-            "Contact-first sourcing will also enable Yellow Pages, BBB, DuckDuckGo search results, "
+            "Contact-first sourcing will also enable Yellow Pages, BBB, DuckDuckGo search results, Yelp, Angi, "
             "follow search result pages for phone/email extraction, and any configured paid APIs. "
             "This may take longer but is the best way to surface phone/email contacts."
         )
@@ -167,6 +180,26 @@ def _run_search(trades: tuple[str, ...], location: str, pages: int, follow: bool
     return search_engines.search(list(trades), max_pages=int(pages), follow_pages=follow)
 
 
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
+def _run_yelp(trades: tuple[str, ...], location: str, pages: int, follow: bool) -> pd.DataFrame:
+    return yelp.search(list(trades), location=location, max_pages=int(pages), follow_pages=follow)
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
+def _run_angi(trades: tuple[str, ...], location: str, pages: int, follow: bool) -> pd.DataFrame:
+    return angi.search(list(trades), location=location, max_pages=int(pages), follow_pages=follow)
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
+def _run_homeadvisor(trades: tuple[str, ...], location: str, pages: int, follow: bool) -> pd.DataFrame:
+    return homeadvisor.search(list(trades), location=location, max_pages=int(pages), follow_pages=follow)
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
+def _run_linkedin(trades: tuple[str, ...], location: str, pages: int, follow: bool) -> pd.DataFrame:
+    return linkedin.search(list(trades), location=location, max_pages=int(pages), follow_pages=follow)
+
+
 def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -200,7 +233,10 @@ def _to_excel_bytes(df: pd.DataFrame) -> bytes:
         export.to_excel(writer, index=False, sheet_name="Contractors")
         ws = writer.sheets["Contractors"]
         for i, col in enumerate(export.columns):
-            width = min(60, max(12, int(export[col].astype(str).str.len().quantile(0.9) or 12) + 2))
+            length = export[col].astype(str).str.len().quantile(0.9)
+            if pd.isna(length):
+                length = 12
+            width = min(60, max(12, int(length) + 2))
             ws.set_column(i, i, width)
     return buf.getvalue()
 
@@ -276,12 +312,17 @@ if run:
         use_yp = True
         use_bbb = True
         use_search = True
+        use_yelp = True
+        use_angi = True
+        use_homeadvisor = True
+        use_linkedin = True
+        follow_search_links = True
         use_google = True
         use_hunter = True
         use_apollo = True
     frames: list[pd.DataFrame] = []
     progress = st.progress(0.0, text="Starting…")
-    steps = sum([use_permits, use_contracts, use_idfpr, use_yp, use_bbb, use_search]) or 1
+    steps = sum([use_permits, use_contracts, use_idfpr, use_yp, use_bbb, use_search, use_yelp, use_angi, use_homeadvisor, use_linkedin]) or 1
     step = 0
 
     if use_permits:
@@ -334,6 +375,42 @@ if run:
             frames.append(_run_search(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
         except Exception as e:
             st.warning(f"Search engine scraping failed: {e}")
+        step += 1
+
+    if use_yelp:
+        progress.progress(step / steps, text="Searching Yelp results…")
+        trades_for_scrape = selected_trades or all_trade_labels()[:6]
+        try:
+            frames.append(_run_yelp(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
+        except Exception as e:
+            st.warning(f"Yelp search failed: {e}")
+        step += 1
+
+    if use_angi:
+        progress.progress(step / steps, text="Searching Angi results…")
+        trades_for_scrape = selected_trades or all_trade_labels()[:6]
+        try:
+            frames.append(_run_angi(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
+        except Exception as e:
+            st.warning(f"Angi search failed: {e}")
+        step += 1
+
+    if use_homeadvisor:
+        progress.progress(step / steps, text="Searching HomeAdvisor results…")
+        trades_for_scrape = selected_trades or all_trade_labels()[:6]
+        try:
+            frames.append(_run_homeadvisor(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
+        except Exception as e:
+            st.warning(f"HomeAdvisor search failed: {e}")
+        step += 1
+
+    if use_linkedin:
+        progress.progress(step / steps, text="Searching LinkedIn results…")
+        trades_for_scrape = selected_trades or all_trade_labels()[:6]
+        try:
+            frames.append(_run_linkedin(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
+        except Exception as e:
+            st.warning(f"LinkedIn search failed: {e}")
         step += 1
 
     progress.progress(1.0, text="Merging sources…")

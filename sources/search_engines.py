@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 
 from .common import extract_emails, extract_phones, http_get_text, normalize_company
 from .trades import keywords_for
+from .website_contacts import crawl_website_contacts
 
 DUCK_URL = "https://html.duckduckgo.com/html"
 SEARCH_HEADERS = {
@@ -74,37 +75,43 @@ def _fetch_page_text(url: str, session: requests.Session | None = None) -> str:
         return ""
 
 
-def _find_contact_page(html: str, base_url: str) -> str | None:
-    soup = BeautifulSoup(html, "lxml")
-    for link in soup.select("a[href]"):
-        href = link["href"].strip()
-        if not href:
-            continue
-        text = link.get_text(" ", strip=True).lower()
-        href_lower = href.lower()
-        if any(token in href_lower for token in ["contact", "about", "team", "support", "help"]):
-            return urljoin(base_url, href)
-        if any(token in text for token in ["contact", "about", "team", "support", "help"]):
-            return urljoin(base_url, href)
-    return None
-
-
-def _extract_contact_links(html: str) -> tuple[list[str], list[str]]:
-    phones = extract_phones(html)
-    emails = extract_emails(html)
-    soup = BeautifulSoup(html, "lxml")
-    for link in soup.select("a[href]"):
-        href = link["href"].strip()
-        if href.lower().startswith("tel:"):
-            phones.extend(extract_phones(href))
-        elif href.lower().startswith("mailto:"):
-            email = href.split(":", 1)[1].split("?")[0].strip()
-            if email:
-                emails.append(email)
-    return phones, emails
-
-
 def _parse(html: str, trade_label: str, follow_pages: bool) -> list[dict]:
+    soup = BeautifulSoup(html, "lxml")
+    rows: list[dict] = []
+    session = _duck_session() if follow_pages else None
+    for card in soup.select("div.result, div.result__body, article.result"):
+        link_el = card.select_one("a.result__a, a[href]")
+        if not link_el or not link_el.has_attr("href"):
+            continue
+        url = _normalize_url(link_el["href"])
+        title = link_el.get_text(strip=True)
+        snippet_el = card.select_one("a.result__snippet, .result__snippet, .result__content, .result__snippet--long")
+        snippet = snippet_el.get_text(" ", strip=True) if snippet_el else ""
+        phones = extract_phones(snippet)
+        emails = extract_emails(snippet)
+        if follow_pages and url:
+            details = crawl_website_contacts(url, session=session)
+            phones.extend(extract_phones(details.get("phone", "")))
+            emails.extend(extract_emails(details.get("email", "")))
+        phone = phones[0] if phones else ""
+        email = emails[0] if emails else ""
+        rows.append({
+            "contractor_name": title or trade_label,
+            "contractor_name_norm": normalize_company(title or trade_label),
+            "phone": phone,
+            "email": email,
+            "website": url,
+            "address": "",
+            "city": "",
+            "state": "",
+            "zipcode": "",
+            "trades": [trade_label],
+            "trades_str": trade_label,
+            "source": "DuckDuckGo Search",
+            "jobs_count": 0,
+            "total_reported_cost": 0.0,
+        })
+    return rows
     soup = BeautifulSoup(html, "lxml")
     rows: list[dict] = []
     session = _duck_session() if follow_pages else None
@@ -150,6 +157,26 @@ def _parse(html: str, trade_label: str, follow_pages: bool) -> list[dict]:
             "total_reported_cost": 0.0,
         })
     return rows
+
+
+def search_query(
+    query: str,
+    label: str,
+    max_pages: int = 2,
+    follow_pages: bool = False,
+    delay_sec: float = 1.5,
+) -> pd.DataFrame:
+    rows: list[dict] = []
+    for page in range(1, max_pages + 1):
+        try:
+            html = _search_page(query, page)
+        except Exception:
+            break
+        rows.extend(_parse(html, label, follow_pages=follow_pages))
+        time.sleep(delay_sec)
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).drop_duplicates(subset=["contractor_name_norm", "website"])
 
 
 def search(
