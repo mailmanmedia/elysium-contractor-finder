@@ -228,8 +228,6 @@ def _normalize_contact_fields(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _ensure_contact_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
     out = df.copy()
     for col in ["phone", "email"]:
         if col not in out.columns:
