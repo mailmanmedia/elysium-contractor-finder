@@ -63,6 +63,7 @@ with st.sidebar:
     issued_since = st.date_input("Issued since", value=default_since)
 
     st.header("Cost / activity filters")
+    st.caption("Optional. Only apply these when you need permit/contract activity data; company name and phone/email are the key required fields.")
     min_jobs = st.number_input("Min. jobs", min_value=0, value=0, step=1)
     min_cost = st.number_input("Min. total reported cost ($)", min_value=0, value=0, step=10000)
 
@@ -179,10 +180,12 @@ def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     if selected_trades:
         sel = set(selected_trades)
         out = out[out["trades"].map(lambda L: bool(set(L) & sel) if isinstance(L, list) else False)]
-    if min_jobs:
-        out = out[pd.to_numeric(out["jobs_count"], errors="coerce").fillna(0) >= min_jobs]
-    if min_cost:
-        out = out[pd.to_numeric(out["total_reported_cost"], errors="coerce").fillna(0) >= min_cost]
+    if min_jobs and "jobs_count" in out.columns:
+        jobs = pd.to_numeric(out["jobs_count"], errors="coerce")
+        out = out[(jobs >= min_jobs) | jobs.isna()]
+    if min_cost and "total_reported_cost" in out.columns:
+        costs = pd.to_numeric(out["total_reported_cost"], errors="coerce")
+        out = out[(costs >= min_cost) | costs.isna()]
     return out
 
 
