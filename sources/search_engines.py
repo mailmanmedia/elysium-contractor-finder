@@ -112,51 +112,6 @@ def _parse(html: str, trade_label: str, follow_pages: bool) -> list[dict]:
             "total_reported_cost": 0.0,
         })
     return rows
-    soup = BeautifulSoup(html, "lxml")
-    rows: list[dict] = []
-    session = _duck_session() if follow_pages else None
-    for card in soup.select("div.result, div.result__body, article.result"):
-        link_el = card.select_one("a.result__a, a[href]")
-        if not link_el or not link_el.has_attr("href"):
-            continue
-        url = _normalize_url(link_el["href"])
-        title = link_el.get_text(strip=True)
-        snippet_el = card.select_one("a.result__snippet, .result__snippet, .result__content, .result__snippet--long")
-        snippet = snippet_el.get_text(" ", strip=True) if snippet_el else ""
-        phones, emails = _extract_contact_links(snippet)
-        if follow_pages and url:
-            page_text = _fetch_page_text(url, session)
-            if page_text:
-                p, e = _extract_contact_links(page_text)
-                phones.extend(p)
-                emails.extend(e)
-                if not phones or not emails:
-                    contact_url = _find_contact_page(page_text, url)
-                    if contact_url:
-                        contact_text = _fetch_page_text(contact_url, session)
-                        if contact_text:
-                            p, e = _extract_contact_links(contact_text)
-                            phones.extend(p)
-                            emails.extend(e)
-        phone = phones[0] if phones else ""
-        email = emails[0] if emails else ""
-        rows.append({
-            "contractor_name": title or trade_label,
-            "contractor_name_norm": normalize_company(title or trade_label),
-            "phone": phone,
-            "email": email,
-            "website": url,
-            "address": "",
-            "city": "",
-            "state": "",
-            "zipcode": "",
-            "trades": [trade_label],
-            "trades_str": trade_label,
-            "source": "DuckDuckGo Search",
-            "jobs_count": 0,
-            "total_reported_cost": 0.0,
-        })
-    return rows
 
 
 def search_query(
