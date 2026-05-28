@@ -176,28 +176,28 @@ def _run_bbb(trades: tuple[str, ...], location: str, pages: int) -> pd.DataFrame
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
-def _run_search(trades: tuple[str, ...], location: str, pages: int, follow: bool) -> pd.DataFrame:
-    return search_engines.search(list(trades), max_pages=int(pages), follow_pages=follow)
+def _run_search(trades: tuple[str, ...], location: str, pages: int, follow: bool, keyword: str) -> pd.DataFrame:
+    return search_engines.search(list(trades), keyword=keyword, location=location, max_pages=int(pages), follow_pages=follow)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
-def _run_yelp(trades: tuple[str, ...], location: str, pages: int, follow: bool) -> pd.DataFrame:
-    return yelp.search(list(trades), location=location, max_pages=int(pages), follow_pages=follow)
+def _run_yelp(trades: tuple[str, ...], location: str, pages: int, follow: bool, keyword: str) -> pd.DataFrame:
+    return yelp.search(list(trades), keyword=keyword, location=location, max_pages=int(pages), follow_pages=follow)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
-def _run_angi(trades: tuple[str, ...], location: str, pages: int, follow: bool) -> pd.DataFrame:
-    return angi.search(list(trades), location=location, max_pages=int(pages), follow_pages=follow)
+def _run_angi(trades: tuple[str, ...], location: str, pages: int, follow: bool, keyword: str) -> pd.DataFrame:
+    return angi.search(list(trades), keyword=keyword, location=location, max_pages=int(pages), follow_pages=follow)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
-def _run_homeadvisor(trades: tuple[str, ...], location: str, pages: int, follow: bool) -> pd.DataFrame:
-    return homeadvisor.search(list(trades), location=location, max_pages=int(pages), follow_pages=follow)
+def _run_homeadvisor(trades: tuple[str, ...], location: str, pages: int, follow: bool, keyword: str) -> pd.DataFrame:
+    return homeadvisor.search(list(trades), keyword=keyword, location=location, max_pages=int(pages), follow_pages=follow)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
-def _run_linkedin(trades: tuple[str, ...], location: str, pages: int, follow: bool) -> pd.DataFrame:
-    return linkedin.search(list(trades), location=location, max_pages=int(pages), follow_pages=follow)
+def _run_linkedin(trades: tuple[str, ...], location: str, pages: int, follow: bool, keyword: str) -> pd.DataFrame:
+    return linkedin.search(list(trades), keyword=keyword, location=location, max_pages=int(pages), follow_pages=follow)
 
 
 def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
@@ -372,7 +372,7 @@ if run:
         progress.progress(step / steps, text="Searching DuckDuckGo…")
         trades_for_scrape = selected_trades or all_trade_labels()[:6]
         try:
-            frames.append(_run_search(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
+            frames.append(_run_search(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links, keyword))
         except Exception as e:
             st.warning(f"Search engine scraping failed: {e}")
         step += 1
@@ -381,7 +381,7 @@ if run:
         progress.progress(step / steps, text="Searching Yelp results…")
         trades_for_scrape = selected_trades or all_trade_labels()[:6]
         try:
-            frames.append(_run_yelp(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
+            frames.append(_run_yelp(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links, keyword))
         except Exception as e:
             st.warning(f"Yelp search failed: {e}")
         step += 1
@@ -390,7 +390,7 @@ if run:
         progress.progress(step / steps, text="Searching Angi results…")
         trades_for_scrape = selected_trades or all_trade_labels()[:6]
         try:
-            frames.append(_run_angi(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
+            frames.append(_run_angi(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links, keyword))
         except Exception as e:
             st.warning(f"Angi search failed: {e}")
         step += 1
@@ -399,7 +399,7 @@ if run:
         progress.progress(step / steps, text="Searching HomeAdvisor results…")
         trades_for_scrape = selected_trades or all_trade_labels()[:6]
         try:
-            frames.append(_run_homeadvisor(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
+            frames.append(_run_homeadvisor(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links, keyword))
         except Exception as e:
             st.warning(f"HomeAdvisor search failed: {e}")
         step += 1
@@ -408,7 +408,7 @@ if run:
         progress.progress(step / steps, text="Searching LinkedIn results…")
         trades_for_scrape = selected_trades or all_trade_labels()[:6]
         try:
-            frames.append(_run_linkedin(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links))
+            frames.append(_run_linkedin(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links, keyword))
         except Exception as e:
             st.warning(f"LinkedIn search failed: {e}")
         step += 1

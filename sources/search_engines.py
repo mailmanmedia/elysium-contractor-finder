@@ -136,14 +136,19 @@ def search_query(
 
 def search(
     trades: list[str],
+    keyword: str = "",
+    location: str = "Chicago, IL",
     max_pages: int = 2,
     follow_pages: bool = False,
     delay_sec: float = 1.5,
 ) -> pd.DataFrame:
     rows: list[dict] = []
     for trade in trades:
-        kws = keywords_for(trade)
-        query = (kws[0] if kws else trade).strip() + " contractor Chicago"
+        if keyword and keyword.strip():
+            query = f"{keyword} {location}".strip()
+        else:
+            kws = keywords_for(trade)
+            query = f"{(kws[0] if kws else trade).strip()} contractor {location}".strip()
         for page in range(1, max_pages + 1):
             try:
                 html = _search_page(query, page)

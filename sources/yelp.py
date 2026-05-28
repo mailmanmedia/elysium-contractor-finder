@@ -13,6 +13,7 @@ import pandas as pd
 
 def search(
     trades: list[str],
+    keyword: str = "",
     location: str = "Chicago, IL",
     max_pages: int = 2,
     follow_pages: bool = True,
@@ -20,9 +21,11 @@ def search(
 ) -> pd.DataFrame:
     rows: list[pd.DataFrame] = []
     for trade in trades:
-        kws = keywords_for(trade)
-        query = (kws[0] if kws else trade).strip()
-        query = f"site:yelp.com {query} {location}"
+        if keyword and keyword.strip():
+            query = f"site:yelp.com {keyword} {location}".strip()
+        else:
+            kws = keywords_for(trade)
+            query = f"site:yelp.com {(kws[0] if kws else trade).strip()} {location}".strip()
         df = search_query(query, label=trade, max_pages=max_pages, follow_pages=follow_pages, delay_sec=delay_sec)
         if not df.empty:
             df["source"] = "Yelp Search"
