@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import time
 import urllib.parse
+from urllib.parse import urljoin
 
 import pandas as pd
 import requests
@@ -61,16 +62,52 @@ def _search_page(query: str, page: int) -> str:
     return resp.text
 
 
-def _fetch_page_text(url: str) -> str:
+def _fetch_page_text(url: str, session: requests.Session | None = None) -> str:
+    if session is None:
+        session = requests.Session()
+        session.headers.update(SEARCH_HEADERS)
     try:
-        return http_get_text(url, headers=SEARCH_HEADERS, ttl=60 * 60 * 6)
+        resp = session.get(url, timeout=45)
+        resp.raise_for_status()
+        return resp.text
     except Exception:
         return ""
+
+
+def _find_contact_page(html: str, base_url: str) -> str | None:
+    soup = BeautifulSoup(html, "lxml")
+    for link in soup.select("a[href]"):
+        href = link["href"].strip()
+        if not href:
+            continue
+        text = link.get_text(" ", strip=True).lower()
+        href_lower = href.lower()
+        if any(token in href_lower for token in ["contact", "about", "team", "support", "help"]):
+            return urljoin(base_url, href)
+        if any(token in text for token in ["contact", "about", "team", "support", "help"]):
+            return urljoin(base_url, href)
+    return None
+
+
+def _extract_contact_links(html: str) -> tuple[list[str], list[str]]:
+    phones = extract_phones(html)
+    emails = extract_emails(html)
+    soup = BeautifulSoup(html, "lxml")
+    for link in soup.select("a[href]"):
+        href = link["href"].strip()
+        if href.lower().startswith("tel:"):
+            phones.extend(extract_phones(href))
+        elif href.lower().startswith("mailto:"):
+            email = href.split(":", 1)[1].split("?")[0].strip()
+            if email:
+                emails.append(email)
+    return phones, emails
 
 
 def _parse(html: str, trade_label: str, follow_pages: bool) -> list[dict]:
     soup = BeautifulSoup(html, "lxml")
     rows: list[dict] = []
+    session = _duck_session() if follow_pages else None
     for card in soup.select("div.result, div.result__body, article.result"):
         link_el = card.select_one("a.result__a, a[href]")
         if not link_el or not link_el.has_attr("href"):
@@ -79,13 +116,21 @@ def _parse(html: str, trade_label: str, follow_pages: bool) -> list[dict]:
         title = link_el.get_text(strip=True)
         snippet_el = card.select_one("a.result__snippet, .result__snippet, .result__content, .result__snippet--long")
         snippet = snippet_el.get_text(" ", strip=True) if snippet_el else ""
-        phones = extract_phones(snippet)
-        emails = extract_emails(snippet)
+        phones, emails = _extract_contact_links(snippet)
         if follow_pages and url:
-            page_text = _fetch_page_text(url)
+            page_text = _fetch_page_text(url, session)
             if page_text:
-                phones.extend(extract_phones(page_text))
-                emails.extend(extract_emails(page_text))
+                p, e = _extract_contact_links(page_text)
+                phones.extend(p)
+                emails.extend(e)
+                if not phones or not emails:
+                    contact_url = _find_contact_page(page_text, url)
+                    if contact_url:
+                        contact_text = _fetch_page_text(contact_url, session)
+                        if contact_text:
+                            p, e = _extract_contact_links(contact_text)
+                            phones.extend(p)
+                            emails.extend(e)
         phone = phones[0] if phones else ""
         email = emails[0] if emails else ""
         rows.append({
