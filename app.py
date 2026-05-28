@@ -115,9 +115,11 @@ with st.sidebar:
         help="If selected, the search will prioritize reachability by running scrapers and enrichment sources for phone/email details.",
     )
     if contact_first_mode:
+        follow_search_links = True
         st.info(
             "Contact-first sourcing will also enable Yellow Pages, BBB, DuckDuckGo search results, "
-            "and any configured paid APIs. This may take longer but is the best way to surface phone/email contacts."
+            "follow search result pages for phone/email extraction, and any configured paid APIs. "
+            "This may take longer but is the best way to surface phone/email contacts."
         )
 
     st.header("Limits")

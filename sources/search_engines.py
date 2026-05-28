@@ -14,6 +14,7 @@ import time
 import urllib.parse
 
 import pandas as pd
+import requests
 from bs4 import BeautifulSoup
 
 from .common import extract_emails, extract_phones, http_get_text, normalize_company
@@ -23,7 +24,16 @@ DUCK_URL = "https://html.duckduckgo.com/html"
 SEARCH_HEADERS = {
     "User-Agent": "Mozilla/5.0 ElysiumContractorFinder/1.0",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Referer": "https://duckduckgo.com/",
 }
+
+
+def _duck_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update(SEARCH_HEADERS)
+    session.get("https://duckduckgo.com/", timeout=45)
+    return session
 
 
 def _normalize_url(href: str) -> str:
@@ -45,7 +55,10 @@ def _search_page(query: str, page: int) -> str:
         "kl": "us-en",
     }
     url = f"{DUCK_URL}?{urllib.parse.urlencode(params)}"
-    return http_get_text(url, headers=SEARCH_HEADERS, ttl=60 * 60 * 6)
+    session = _duck_session()
+    resp = session.get(url, timeout=45)
+    resp.raise_for_status()
+    return resp.text
 
 
 def _fetch_page_text(url: str) -> str:
