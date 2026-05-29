@@ -67,8 +67,17 @@ with st.sidebar:
     )
 
     st.header("Date range (permits/contracts)")
+    use_date_filter = st.checkbox(
+        "Filter permits/contracts by issue date",
+        value=False,
+        help="Enable this only when you want permits or contracts limited by date.",
+    )
     default_since = date.today() - timedelta(days=365 * 2)
-    issued_since = st.date_input("Issued since", value=default_since)
+    issued_since = st.date_input(
+        "Issued since",
+        value=default_since,
+        disabled=not use_date_filter,
+    )
 
     st.header("Cost / activity filters")
     st.caption("Optional. Only apply these when you need permit/contract activity data; company name and phone/email are the key required fields.")
@@ -82,6 +91,9 @@ with st.sidebar:
     use_yp = st.checkbox("Yellow Pages (scrape — opt-in)", value=False)
     use_bbb = st.checkbox("BBB (scrape — opt-in)", value=False)
     use_search = st.checkbox("DuckDuckGo search results (scrape — opt-in)", value=False)
+    use_google_search = st.checkbox("Google search results (scrape — opt-in)", value=False)
+    use_bing_search = st.checkbox("Bing search results (scrape — opt-in)", value=False)
+    use_yahoo_search = st.checkbox("Yahoo search results (scrape — opt-in)", value=False)
     use_yelp = st.checkbox("Yelp search (site search via DuckDuckGo)", value=False)
     use_angi = st.checkbox("Angi search (site search via DuckDuckGo)", value=False)
     use_homeadvisor = st.checkbox("HomeAdvisor search (site search via DuckDuckGo)", value=False)
@@ -114,10 +126,10 @@ with st.sidebar:
         value=True,
         help="Place contractors with phone/email at the top.",
     )
-    if require_contact and not (use_yp or use_bbb or use_search or use_yelp or use_angi or use_homeadvisor or use_linkedin or use_google or use_hunter or use_apollo):
+    if require_contact and not (use_yp or use_bbb or use_search or use_google_search or use_bing_search or use_yahoo_search or use_yelp or use_angi or use_homeadvisor or use_linkedin or use_google or use_hunter or use_apollo):
         st.warning(
             "Contact details are likely unavailable unless scraping or enrichment is enabled. "
-            "Turn on Yellow Pages, BBB, Yelp, Angi, HomeAdvisor, LinkedIn, or paid APIs for better coverage."
+            "Turn on Yellow Pages, BBB, DuckDuckGo, Google, Bing, Yahoo, Yelp, Angi, HomeAdvisor, LinkedIn, or paid APIs for better coverage."
         )
 
     st.header("Contact-first sourcing")
@@ -130,11 +142,14 @@ with st.sidebar:
         use_yp = True
         use_bbb = True
         use_search = True
+        use_google_search = True
+        use_bing_search = True
+        use_yahoo_search = True
         use_yelp = True
         use_angi = True
         follow_search_links = True
         st.info(
-            "Contact-first sourcing will also enable Yellow Pages, BBB, DuckDuckGo search results, Yelp, Angi, "
+            "Contact-first sourcing will also enable Yellow Pages, BBB, DuckDuckGo search results, Google, Bing, Yahoo, Yelp, Angi, "
             "follow search result pages for phone/email extraction, and any configured paid APIs. "
             "This may take longer but is the best way to surface phone/email contacts."
         )
@@ -155,12 +170,12 @@ st.caption(
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60)
-def _run_permits(since_iso: str, limit: int, zips: list[str]) -> pd.DataFrame:
+def _run_permits(since_iso: str | None, limit: int, zips: list[str]) -> pd.DataFrame:
     return chicago_permits.search(issued_since=since_iso, limit=int(limit), zipcodes=zips or None)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60)
-def _run_contracts(since_iso: str, limit: int) -> pd.DataFrame:
+def _run_contracts(since_iso: str | None, limit: int) -> pd.DataFrame:
     return chicago_contracts.search(start_date=since_iso, limit=int(limit))
 
 
@@ -182,6 +197,21 @@ def _run_bbb(trades: tuple[str, ...], location: str, pages: int) -> pd.DataFrame
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
 def _run_search(trades: tuple[str, ...], location: str, pages: int, follow: bool, keyword: str) -> pd.DataFrame:
     return search_engines.search(list(trades), keyword=keyword, location=location, max_pages=int(pages), follow_pages=follow)
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
+def _run_google_search(trades: tuple[str, ...], location: str, pages: int, follow: bool, keyword: str) -> pd.DataFrame:
+    return search_engines.google_search(list(trades), keyword=keyword, location=location, max_pages=int(pages), follow_pages=follow)
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
+def _run_bing_search(trades: tuple[str, ...], location: str, pages: int, follow: bool, keyword: str) -> pd.DataFrame:
+    return search_engines.bing_search(list(trades), keyword=keyword, location=location, max_pages=int(pages), follow_pages=follow)
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
+def _run_yahoo_search(trades: tuple[str, ...], location: str, pages: int, follow: bool, keyword: str) -> pd.DataFrame:
+    return search_engines.yahoo_search(list(trades), keyword=keyword, location=location, max_pages=int(pages), follow_pages=follow)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 6)
@@ -326,14 +356,16 @@ if run:
         use_apollo = True
     frames: list[pd.DataFrame] = []
     progress = st.progress(0.0, text="Starting…")
-    steps = sum([use_permits, use_contracts, use_idfpr, use_yp, use_bbb, use_search, use_yelp, use_angi, use_homeadvisor, use_linkedin]) or 1
+    steps = sum([use_permits, use_contracts, use_idfpr, use_yp, use_bbb, use_search, use_google_search, use_bing_search, use_yahoo_search, use_yelp, use_angi, use_homeadvisor, use_linkedin]) or 1
     step = 0
+
+    permit_since = issued_since.isoformat() if use_date_filter else None
 
     if use_permits:
         progress.progress(step / steps, text="Pulling Chicago building permits…")
         zips = [z.strip() for z in zip_input.split(",") if z.strip()]
         try:
-            frames.append(_run_permits(issued_since.isoformat(), permit_limit, zips))
+            frames.append(_run_permits(permit_since, permit_limit, zips))
         except Exception as e:
             st.warning(f"Permits source failed: {e}")
         step += 1
@@ -341,7 +373,7 @@ if run:
     if use_contracts:
         progress.progress(step / steps, text="Pulling Chicago contract awards…")
         try:
-            frames.append(_run_contracts(issued_since.isoformat(), permit_limit))
+            frames.append(_run_contracts(permit_since, permit_limit))
         except Exception as e:
             st.warning(f"Contracts source failed: {e}")
         step += 1
@@ -378,7 +410,34 @@ if run:
         try:
             frames.append(_run_search(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links, keyword))
         except Exception as e:
-            st.warning(f"Search engine scraping failed: {e}")
+            st.warning(f"DuckDuckGo search failed: {e}")
+        step += 1
+
+    if use_google_search:
+        progress.progress(step / steps, text="Searching Google…")
+        trades_for_scrape = selected_trades or all_trade_labels()[:6]
+        try:
+            frames.append(_run_google_search(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links, keyword))
+        except Exception as e:
+            st.warning(f"Google search failed: {e}")
+        step += 1
+
+    if use_bing_search:
+        progress.progress(step / steps, text="Searching Bing…")
+        trades_for_scrape = selected_trades or all_trade_labels()[:6]
+        try:
+            frames.append(_run_bing_search(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links, keyword))
+        except Exception as e:
+            st.warning(f"Bing search failed: {e}")
+        step += 1
+
+    if use_yahoo_search:
+        progress.progress(step / steps, text="Searching Yahoo…")
+        trades_for_scrape = selected_trades or all_trade_labels()[:6]
+        try:
+            frames.append(_run_yahoo_search(tuple(trades_for_scrape), city_input, scrape_pages, follow_search_links, keyword))
+        except Exception as e:
+            st.warning(f"Yahoo search failed: {e}")
         step += 1
 
     if use_yelp:

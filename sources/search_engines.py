@@ -134,6 +134,238 @@ def search_query(
     return pd.DataFrame(rows).drop_duplicates(subset=["contractor_name_norm", "website"])
 
 
+def _is_valid_search_result_url(url: str) -> bool:
+    if not url or not url.startswith("http"):
+        return False
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    if not host:
+        return False
+    blocked = ("google.com", "bing.com", "yahoo.com", "duckduckgo.com", "baidu.com", "yandex.com")
+    return not any(host.endswith(domain) for domain in blocked)
+
+
+def _normalize_search_url(href: str) -> str:
+    if not href:
+        return ""
+    href = href.strip()
+    if href.startswith("/url?") or href.startswith("/search?"):
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+        target = params.get("q") or params.get("url") or params.get("uddg")
+        if target:
+            return urllib.parse.unquote(target[0])
+    return href
+
+
+def _parse_google(html: str, trade_label: str, follow_pages: bool) -> list[dict]:
+    soup = BeautifulSoup(html, "lxml")
+    rows: list[dict] = []
+    session = _duck_session() if follow_pages else None
+    for card in soup.select("div.g"):
+        link_el = card.select_one("a[href]")
+        if not link_el or not link_el.has_attr("href"):
+            continue
+        url = _normalize_search_url(link_el["href"])
+        if not _is_valid_search_result_url(url):
+            continue
+        title = link_el.get_text(strip=True)
+        snippet_el = card.select_one(".IsZvec, .VwiC3b, .aCOpRe")
+        snippet = snippet_el.get_text(" ", strip=True) if snippet_el else ""
+        phones = extract_phones(snippet)
+        emails = extract_emails(snippet)
+        if follow_pages and url:
+            details = crawl_website_contacts(url, session=session)
+            phones.extend(extract_phones(details.get("phone", "")))
+            emails.extend(extract_emails(details.get("email", "")))
+        phone = phones[0] if phones else ""
+        email = emails[0] if emails else ""
+        rows.append({
+            "contractor_name": title or trade_label,
+            "contractor_name_norm": normalize_company(title or trade_label),
+            "phone": phone,
+            "email": email,
+            "website": url,
+            "address": "",
+            "city": "",
+            "state": "",
+            "zipcode": "",
+            "trades": [trade_label],
+            "trades_str": trade_label,
+            "source": "Google Search",
+            "jobs_count": 0,
+            "total_reported_cost": 0.0,
+        })
+    return rows
+
+
+def _parse_bing(html: str, trade_label: str, follow_pages: bool) -> list[dict]:
+    soup = BeautifulSoup(html, "lxml")
+    rows: list[dict] = []
+    session = _duck_session() if follow_pages else None
+    for card in soup.select("li.b_algo"):
+        link_el = card.select_one("h2 a")
+        if not link_el or not link_el.has_attr("href"):
+            continue
+        url = _normalize_search_url(link_el["href"])
+        if not _is_valid_search_result_url(url):
+            continue
+        title = link_el.get_text(strip=True)
+        snippet_el = card.select_one(".b_caption p")
+        snippet = snippet_el.get_text(" ", strip=True) if snippet_el else ""
+        phones = extract_phones(snippet)
+        emails = extract_emails(snippet)
+        if follow_pages and url:
+            details = crawl_website_contacts(url, session=session)
+            phones.extend(extract_phones(details.get("phone", "")))
+            emails.extend(extract_emails(details.get("email", "")))
+        phone = phones[0] if phones else ""
+        email = emails[0] if emails else ""
+        rows.append({
+            "contractor_name": title or trade_label,
+            "contractor_name_norm": normalize_company(title or trade_label),
+            "phone": phone,
+            "email": email,
+            "website": url,
+            "address": "",
+            "city": "",
+            "state": "",
+            "zipcode": "",
+            "trades": [trade_label],
+            "trades_str": trade_label,
+            "source": "Bing Search",
+            "jobs_count": 0,
+            "total_reported_cost": 0.0,
+        })
+    return rows
+
+
+def _parse_yahoo(html: str, trade_label: str, follow_pages: bool) -> list[dict]:
+    soup = BeautifulSoup(html, "lxml")
+    rows: list[dict] = []
+    session = _duck_session() if follow_pages else None
+    for card in soup.select("div#web li"):
+        link_el = card.select_one("h3 a")
+        if not link_el or not link_el.has_attr("href"):
+            continue
+        url = _normalize_search_url(link_el["href"])
+        if not _is_valid_search_result_url(url):
+            continue
+        title = link_el.get_text(strip=True)
+        snippet_el = card.select_one(".compText p, .lh-16")
+        snippet = snippet_el.get_text(" ", strip=True) if snippet_el else ""
+        phones = extract_phones(snippet)
+        emails = extract_emails(snippet)
+        if follow_pages and url:
+            details = crawl_website_contacts(url, session=session)
+            phones.extend(extract_phones(details.get("phone", "")))
+            emails.extend(extract_emails(details.get("email", "")))
+        phone = phones[0] if phones else ""
+        email = emails[0] if emails else ""
+        rows.append({
+            "contractor_name": title or trade_label,
+            "contractor_name_norm": normalize_company(title or trade_label),
+            "phone": phone,
+            "email": email,
+            "website": url,
+            "address": "",
+            "city": "",
+            "state": "",
+            "zipcode": "",
+            "trades": [trade_label],
+            "trades_str": trade_label,
+            "source": "Yahoo Search",
+            "jobs_count": 0,
+            "total_reported_cost": 0.0,
+        })
+    return rows
+
+
+def _search_engine_page(base_url: str, query: str, page: int) -> str:
+    params = {}
+    if "google.com" in base_url:
+        params = {"q": query, "start": str((page - 1) * 10), "num": "10", "hl": "en"}
+    elif "bing.com" in base_url:
+        params = {"q": query, "first": str((page - 1) * 10 + 1)}
+    elif "yahoo.com" in base_url:
+        params = {"p": query, "b": str((page - 1) * 10 + 1)}
+    url = f"{base_url}?{urllib.parse.urlencode(params)}"
+    session = _duck_session()
+    resp = session.get(url, timeout=45)
+    resp.raise_for_status()
+    return resp.text
+
+
+def _search_engine(
+    base_url: str,
+    query: str,
+    parse_fn,
+    trade_label: str,
+    max_pages: int = 2,
+    follow_pages: bool = False,
+    delay_sec: float = 1.5,
+) -> list[dict]:
+    rows: list[dict] = []
+    for page in range(1, max_pages + 1):
+        try:
+            html = _search_engine_page(base_url, query, page)
+        except Exception:
+            break
+        rows.extend(parse_fn(html, trade_label, follow_pages=follow_pages))
+        time.sleep(delay_sec)
+    return rows
+
+
+def google_search(
+    trades: list[str],
+    keyword: str = "",
+    location: str = "Chicago, IL",
+    max_pages: int = 2,
+    follow_pages: bool = False,
+    delay_sec: float = 1.5,
+) -> pd.DataFrame:
+    rows: list[dict] = []
+    for trade in trades:
+        query = f"{keyword} {location}".strip() if keyword.strip() else f"{trade} contractor {location}".strip()
+        rows.extend(_search_engine("https://www.google.com/search", query, _parse_google, trade, max_pages=max_pages, follow_pages=follow_pages, delay_sec=delay_sec))
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).drop_duplicates(subset=["contractor_name_norm", "website"])
+
+
+def bing_search(
+    trades: list[str],
+    keyword: str = "",
+    location: str = "Chicago, IL",
+    max_pages: int = 2,
+    follow_pages: bool = False,
+    delay_sec: float = 1.5,
+) -> pd.DataFrame:
+    rows: list[dict] = []
+    for trade in trades:
+        query = f"{keyword} {location}".strip() if keyword.strip() else f"{trade} contractor {location}".strip()
+        rows.extend(_search_engine("https://www.bing.com/search", query, _parse_bing, trade, max_pages=max_pages, follow_pages=follow_pages, delay_sec=delay_sec))
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).drop_duplicates(subset=["contractor_name_norm", "website"])
+
+
+def yahoo_search(
+    trades: list[str],
+    keyword: str = "",
+    location: str = "Chicago, IL",
+    max_pages: int = 2,
+    follow_pages: bool = False,
+    delay_sec: float = 1.5,
+) -> pd.DataFrame:
+    rows: list[dict] = []
+    for trade in trades:
+        query = f"{keyword} {location}".strip() if keyword.strip() else f"{trade} contractor {location}".strip()
+        rows.extend(_search_engine("https://search.yahoo.com/search", query, _parse_yahoo, trade, max_pages=max_pages, follow_pages=follow_pages, delay_sec=delay_sec))
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).drop_duplicates(subset=["contractor_name_norm", "website"])
+
+
 def search(
     trades: list[str],
     keyword: str = "",
