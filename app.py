@@ -7,6 +7,7 @@ Run with:
 from __future__ import annotations
 
 import io
+import math
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -59,7 +60,11 @@ with st.sidebar:
     )
 
     st.header("Location")
-    city_input = st.text_input("City for scraped sources", "Chicago, IL")
+    city_input = st.text_input(
+        "Location / region for scraped sources",
+        "Illinois",
+        help="This text is used directly in scraper search queries. Use a state or regional term like Illinois, Chicagoland, or a nearby city.",
+    )
     zip_input = st.text_input(
         "ZIP codes (comma-separated, optional)",
         "",
@@ -256,6 +261,47 @@ def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         costs = pd.to_numeric(out["total_reported_cost"], errors="coerce")
         out = out[(costs >= min_cost) | costs.isna()]
     return out
+
+
+def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return 3959.0 * c
+
+
+def _compute_distance_from_chicago(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "latitude" not in df.columns or "longitude" not in df.columns:
+        return df
+    df = df.copy()
+    chicago_lat, chicago_lon = 41.8781, -87.6298
+    df["distance_from_chicago"] = pd.to_numeric(df["latitude"], errors="coerce")
+    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
+    valid = df["distance_from_chicago"].notna() & df["longitude"].notna()
+    df.loc[valid, "distance_from_chicago"] = df.loc[valid].apply(
+        lambda row: _haversine_distance(chicago_lat, chicago_lon, row["latitude"], row["longitude"]),
+        axis=1,
+    )
+    df.loc[~valid, "distance_from_chicago"] = pd.NA
+    return df
+
+
+def _service_area_from_location(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    df = df.copy()
+    def make_area(row):
+        parts = []
+        if str(row.get("city", "")).strip():
+            parts.append(row["city"].strip())
+        if str(row.get("state", "")).strip():
+            parts.append(row["state"].strip())
+        return ", ".join(parts)
+    df["service_area"] = df.apply(make_area, axis=1)
+    return df
 
 
 def _to_excel_bytes(df: pd.DataFrame) -> bytes:
@@ -478,6 +524,8 @@ if run:
 
     progress.progress(1.0, text="Merging sources…")
     merged = merge_sources(frames)
+    merged = _compute_distance_from_chicago(merged)
+    merged = _service_area_from_location(merged)
     st.session_state["results"] = merged
     progress.empty()
 
@@ -553,7 +601,7 @@ if results.empty:
 else:
     show_cols = [
         c for c in [
-            "contractor_name", "trades_str", "phone", "email", "has_phone", "has_email", "contact_score", "contact_source", "website",
+            "contractor_name", "trades_str", "service_area", "distance_from_chicago", "phone", "email", "has_phone", "has_email", "contact_score", "contact_source", "website",
             "address", "city", "state", "zipcode",
             "jobs_count", "total_reported_cost", "last_seen",
             "license_number", "license_status", "expiration_date",

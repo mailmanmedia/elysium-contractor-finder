@@ -180,6 +180,8 @@ def aggregate_by_contractor(long_df: pd.DataFrame) -> pd.DataFrame:
             city=("contractor_city", lambda s: next((x for x in s if isinstance(x, str) and x.strip()), "")),
             state=("contractor_state", lambda s: next((x for x in s if isinstance(x, str) and x.strip()), "")),
             zipcode=("contractor_zipcode", lambda s: next((x for x in s if isinstance(x, str) and x.strip()), "")),
+            latitude=("latitude", lambda s: next((x for x in s if x is not None and str(x).strip()), "")),
+            longitude=("longitude", lambda s: next((x for x in s if x is not None and str(x).strip()), "")),
             contractor_type=(
                 "contractor_type",
                 lambda s: ", ".join(sorted({str(x).strip() for x in s if isinstance(x, str) and x.strip()})),
