@@ -60,7 +60,7 @@ def http_get_text(url: str, headers: dict | None = None, ttl: int = DEFAULT_TTL)
 
 
 _PHONE_RE = re.compile(r"(\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4})")
-_EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+")
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", re.IGNORECASE)
 
 
 def extract_phones(text: str) -> list[str]:

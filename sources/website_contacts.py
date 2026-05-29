@@ -21,7 +21,8 @@ SEARCH_HEADERS = {
     "Referer": "https://www.google.com/",
 }
 
-CONTACT_LINK_TOKENS = ["contact", "about", "team", "support", "help", "call", "email"]
+CONTACT_LINK_TOKENS = ["contact", "about", "team", "support", "help", "call", "email", "sales", "customer", "request", "quote", "location", "office"]
+MAX_CONTACT_PAGE_CANDIDATES = 5
 
 
 def _get_session(session: requests.Session | None = None) -> requests.Session:
@@ -32,6 +33,16 @@ def _get_session(session: requests.Session | None = None) -> requests.Session:
 
 
 def _fetch_url(url: str, session: requests.Session | None = None) -> str:
+    session = _get_session(session)
+    try:
+        resp = session.get(url, timeout=45)
+        resp.raise_for_status()
+        return resp.text
+    except Exception:
+        return ""
+
+
+def _fetch_script_text(url: str, session: requests.Session | None = None) -> str:
     session = _get_session(session)
     try:
         resp = session.get(url, timeout=45)
@@ -94,9 +105,86 @@ def _extract_json_ld_contacts(html: str) -> tuple[list[str], list[str]]:
     return phones, emails
 
 
-def _extract_contact_links(html: str) -> tuple[list[str], list[str]]:
+JUNK_EMAIL_DOMAINS = {
+    "example.com",
+    "test.com",
+    "localhost",
+    "local",
+    "greensock.com",
+    "slick-carousel.com",
+    "jquery.com",
+    "github.com",
+    "cdnjs.com",
+    "npmjs.com",
+    "google.com",
+    "googleapis.com",
+}
+
+JUNK_EMAIL_LOCALS = {
+    "example",
+    "test",
+    "demo",
+    "noreply",
+    "no-reply",
+    "donotreply",
+    "do-not-reply",
+    "webmaster",
+    "postmaster",
+}
+
+
+def _is_valid_email(email: str) -> bool:
+    normalized = email.lower().strip()
+    if "@" not in normalized:
+        return False
+    local, domain = normalized.split("@", 1)
+    local = local.strip()
+    domain = domain.strip().strip(".")
+    if not local or not domain:
+        return False
+    if any(normalized.endswith(f"@{junk}") for junk in JUNK_EMAIL_DOMAINS):
+        return False
+    if local in JUNK_EMAIL_LOCALS:
+        return False
+    if local.startswith("test") or local.startswith("demo") or local.startswith("example"):
+        return False
+    return True
+
+
+def _filter_emails(emails: list[str]) -> list[str]:
+    seen = set()
+    filtered: list[str] = []
+    for email in emails:
+        candidate = email.lower().strip()
+        if not candidate or candidate in seen:
+            continue
+        if not _is_valid_email(candidate):
+            continue
+        seen.add(candidate)
+        filtered.append(candidate)
+    return filtered
+
+
+def _decode_cfemails(html: str) -> list[str]:
+    emails: list[str] = []
+    for match in re.finditer(r'data-cfemail="([0-9a-fA-F]+)"', html):
+        encoded = match.group(1)
+        try:
+            data = bytes.fromhex(encoded)
+            if not data:
+                continue
+            key = data[0]
+            decoded = "".join(chr(b ^ key) for b in data[1:])
+            emails.extend(extract_emails(decoded))
+        except ValueError:
+            continue
+    return _filter_emails(emails)
+
+
+def _extract_contact_links(html: str, base_url: str = "", session: requests.Session | None = None) -> tuple[list[str], list[str]]:
     phones = extract_phones(html)
     emails = extract_emails(html)
+    emails.extend(_decode_cfemails(html))
     soup = BeautifulSoup(html, "lxml")
     for link in soup.select("a[href]"):
         href = link["href"].strip()
@@ -108,23 +196,36 @@ def _extract_contact_links(html: str) -> tuple[list[str], list[str]]:
             if email:
                 emails.append(email)
             continue
-        # Expose object text near contact links too
         if any(token in href.lower() for token in CONTACT_LINK_TOKENS):
             node_text = link.get_text(" ", strip=True)
             phones.extend(extract_phones(node_text))
             emails.extend(extract_emails(node_text))
+    # Also examine script content and external script assets for explicit contact details.
+    for script in soup.select("script"):
+        if script.has_attr("src"):
+            script_url = _normalize_link(base_url, script["src"])
+            if _same_domain(base_url, script_url):
+                script_text = _fetch_script_text(script_url, session=session)
+                phones.extend(extract_phones(script_text))
+                emails.extend(extract_emails(script_text))
+                emails.extend(_decode_cfemails(script_text))
+        else:
+            script_text = script.string or script.get_text()
+            phones.extend(extract_phones(script_text))
+            emails.extend(extract_emails(script_text))
+            emails.extend(_decode_cfemails(script_text))
     json_phones, json_emails = _extract_json_ld_contacts(html)
     phones.extend(json_phones)
     emails.extend(json_emails)
-    return phones, emails
+    return phones, _filter_emails(emails)
 
 
-def _find_contact_page(html: str, base_url: str) -> str | None:
+def _find_contact_pages(html: str, base_url: str) -> list[str]:
     soup = BeautifulSoup(html, "lxml")
     candidates: list[tuple[int, str]] = []
     for link in soup.select("a[href]"):
         href = link["href"].strip()
-        if not href:
+        if not href or href.lower().startswith(("mailto:", "tel:", "#")):
             continue
         normalized = href.lower()
         text = link.get_text(" ", strip=True).lower()
@@ -134,29 +235,53 @@ def _find_contact_page(html: str, base_url: str) -> str | None:
                 score = sum(token in normalized or token in text for token in CONTACT_LINK_TOKENS)
                 candidates.append((score, candidate))
     if not candidates:
-        return None
+        return []
     candidates.sort(key=lambda pair: pair[0], reverse=True)
-    return candidates[0][1]
+    seen = set()
+    urls: list[str] = []
+    for _, candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            urls.append(candidate)
+        if len(urls) >= MAX_CONTACT_PAGE_CANDIDATES:
+            break
+    return urls
 
 
 def crawl_website_contacts(url: str, session: requests.Session | None = None) -> dict[str, Any]:
     if not url:
         return {"phone": "", "email": "", "contact_page": ""}
     html = _fetch_url(url, session)
-    phones, emails = _extract_contact_links(html)
-    contact_page = ""
-    if not phones or not emails:
-        contact_page = _find_contact_page(html, url) or ""
-        if contact_page:
-            contact_html = _fetch_url(contact_page, session)
-            if contact_html:
-                p, e = _extract_contact_links(contact_html)
-                phones.extend(p)
-                emails.extend(e)
+    phones, emails = _extract_contact_links(html, base_url=url, session=session)
+    contact_pages = []
+    candidates = _find_contact_pages(html, url)
+    for candidate in candidates:
+        contact_pages.append(candidate)
+        if candidate == url:
+            continue
+        candidate_html = _fetch_url(candidate, session)
+        if not candidate_html:
+            continue
+        p, e = _extract_contact_links(candidate_html, base_url=candidate, session=session)
+        phones.extend(p)
+        emails.extend(e)
+        # Also follow nested contact pages from the candidate page if no email found yet.
+        if not emails:
+            nested = _find_contact_pages(candidate_html, candidate)
+            for nested_url in nested:
+                if nested_url in contact_pages:
+                    continue
+                contact_pages.append(nested_url)
+                nested_html = _fetch_url(nested_url, session)
+                if nested_html:
+                    p2, e2 = _extract_contact_links(nested_html, base_url=nested_url, session=session)
+                    phones.extend(p2)
+                    emails.extend(e2)
     phone = phones[0] if phones else ""
     email = emails[0] if emails else ""
     return {
         "phone": phone,
         "email": email,
-        "contact_page": contact_page,
+        "contact_page": contact_pages[0] if contact_pages else "",
+        "contact_pages": contact_pages,
     }
